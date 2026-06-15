@@ -1,0 +1,137 @@
+﻿{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+    <div class="page-header-left">
+        <h1>Sensor Data</h1>
+        <span class="page-subtitle">Browse and export environmental readings</span>
+    </div>
+    <div class="flex-center gap-3">
+        <a href="/export/readings/csv/?{{ filter_qs }}" class="btn btn-small">&#8625; Export CSV</a>
+    </div>
+</div>
+
+<div class="filter-bar">
+    <form method="get" action="/readings/">
+        <div class="filter-row">
+            <label>Venue:</label>
+            <select name="loc">
+                <option value="">All Venues</option>
+                {% for code, label in venues %}
+                <option value="{{ code }}" {% if filters.loc == code %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+            <label>Node:</label>
+            <select name="node_id">
+                <option value="">All Nodes</option>
+                <option value="A01" {% if filters.node_id == "A01" %}selected{% endif %}>A01</option>
+                <option value="A02" {% if filters.node_id == "A02" %}selected{% endif %}>A02</option>
+                <option value="A03" {% if filters.node_id == "A03" %}selected{% endif %}>A03</option>
+                <option value="A04" {% if filters.node_id == "A04" %}selected{% endif %}>A04</option>
+                <option value="A05" {% if filters.node_id == "A05" %}selected{% endif %}>A05</option>
+                <option value="A06" {% if filters.node_id == "A06" %}selected{% endif %}>A06</option>
+                </select>
+            <label>From:</label>
+            <input type="datetime-local" name="start" value="{{ filters.start }}">
+            <label>To:</label>
+            <input type="datetime-local" name="end" value="{{ filters.end }}">
+            <button type="submit" class="btn btn-primary">Filter</button>
+            {% if filters.loc or filters.node_id or filters.start or filters.end %}
+            <a href="/readings/" class="btn btn-secondary">Clear</a>
+            {% endif %}
+        </div>
+    </form>
+</div>
+
+<div class="stats-summary">
+    <div class="stat-item">
+        <span class="stat-label">Total Records</span>
+        <span class="stat-value">{{ total }}</span>
+    </div>
+    <div class="sep"></div>
+    <div class="stat-item">
+        <span class="stat-label">Venues</span>
+        <span class="stat-value">{{ venues|length }}</span>
+    </div>
+    <div class="sep"></div>
+    <div class="stat-item">
+        <span class="stat-label">Page</span>
+        <span class="stat-value">{{ page }} / {{ total_pages }}</span>
+    </div>
+    <div class="sep"></div>
+    <div class="stat-item">
+        <span class="stat-label">Per Page</span>
+        <span class="stat-value">50</span>
+    </div>
+</div>
+
+<div class="table-wrapper">
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Timestamp</th>
+                <th>Node</th>
+                <th>Venue</th>
+                <th>Temp (&deg;C)</th>
+                <th>Hum (%)</th>
+                <th>Light (%)</th>
+                <th>Sound (dB)</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in readings %}
+            <tr>
+                <td>{{ r.timestamp|date:"Y-m-d H:i:s" }}</td>
+                <td><span class="room-node" data-node="{{ r.node_id }}">{{ r.node_id }}</span></td>
+                <td>{{ r.loc }}</td>
+                <td class="val-temp">{{ r.temp }}</td>
+                <td class="val-hum">{{ r.hum }}</td>
+                <td class="val-light">{{ r.light }}</td>
+                <td class="val-snd">{{ r.snd }}</td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="7" class="empty-state">No readings found</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{% if total_pages > 1 %}
+<div class="pagination">
+    <span class="page-info">{{ total }} readings &mdash; Page {{ page }} of {{ total_pages }}</span>
+    <div class="page-controls">
+        {% if page > 1 %}
+        <a href="?page=1&amp;{{ filter_qs }}" class="btn btn-small" title="First">&laquo;</a>
+        <a href="?page={{ page|add:"-1" }}&amp;{{ filter_qs }}" class="btn btn-small">&lsaquo; Prev</a>
+        {% endif %}
+        {% for p in page_range %}
+            {% if p == 0 %}
+            <span class="page-ellipsis">...</span>
+            {% elif p == page %}
+            <span class="btn btn-small btn-current">{{ p }}</span>
+            {% else %}
+            <a href="?page={{ p }}&amp;{{ filter_qs }}" class="btn btn-small">{{ p }}</a>
+            {% endif %}
+        {% endfor %}
+        {% if page < total_pages %}
+        <a href="?page={{ page|add:"1" }}&amp;{{ filter_qs }}" class="btn btn-small">Next &rsaquo;</a>
+        <a href="?page={{ total_pages }}&amp;{{ filter_qs }}" class="btn btn-small" title="Last">&raquo;</a>
+        {% endif %}
+        <span style="display:inline-flex;align-items:center;gap:4px;margin-left:6px;">
+            <input type="number" id="goPage" min="1" max="{{ total_pages }}" value="{{ page }}" style="width:48px;padding:2px 4px;border:1px solid var(--border);border-radius:4px;font-size:12px;color:var(--text);background:var(--surface);">
+            <button class="btn btn-small" onclick="var p=document.getElementById('goPage').value;if(p&&p>=1&&p<={{ total_pages }})window.location='?page='+p+'&amp;{{ filter_qs }}';">Go</button>
+        </span>
+    </div>
+</div>
+{% endif %}
+
+<div class="action-bar">
+    <span class="meta-text">Data from the last 24 hours by default</span>
+    <div>
+        <a href="/dashboard/?{{ filter_qs }}" class="btn btn-small">View Charts</a>
+        <a href="/analysis/time-event/?{{ filter_qs }}" class="btn btn-small">Analyze Period</a>
+    </div>
+</div>
+{% endblock %}
+
+
+

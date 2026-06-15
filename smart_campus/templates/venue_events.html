@@ -1,0 +1,66 @@
+﻿{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+    <div class="page-header-left">
+        <h1>Venue Events</h1>
+        <span class="page-subtitle">Scheduled activities and bookings</span>
+    </div>
+</div>
+
+<div class="filter-bar">
+    <form method="get" action="/events/">
+        <div class="filter-row">
+            <label>Venue:</label>
+            <select name="venue">
+                <option value="">All Venues</option>
+                {% for code, label in venues %}
+                <option value="{{ code }}" {% if venue_filter == code %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+            <!-- ========== CHANGED: was <input type="date" name="event_date"> ========== -->
+            <label>From:</label>
+            <input type="datetime-local" name="start" value="{{ start_filter }}">
+            <label>To:</label>
+            <input type="datetime-local" name="end" value="{{ end_filter }}">
+            <!-- ================================================================= -->
+            <button type="submit" class="btn btn-primary">Filter</button>
+            <!-- CHANGED: was if venue_filter or event_date_filter -->
+            {% if venue_filter or start_filter or end_filter %}
+            <a href="/events/" class="btn btn-secondary">Clear</a>
+            {% endif %}
+        </div>
+    </form>
+</div>
+
+<div class="table-wrapper">
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Date</th>
+                <th>Venue</th>
+                <th>Time</th>
+                <th>Event</th>
+                <th>Notes</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for event in events %}
+            <tr>
+                <td>{{ event.event_date|date:"Y-m-d" }}</td>
+                <td><strong>{{ event.venue }}</strong></td>
+                <td>{{ event.start_time|time:"H:i" }} &ndash; {{ event.end_time|time:"H:i" }}</td>
+                <td>{{ event.event_title }}</td>
+                <td>{{ event.notes|truncatechars:60|default:"&mdash;" }}</td>
+                <td>
+                    <a href="/analysis/time-event/?loc={{ event.venue }}&start={{ event.event_date|date:"Y-m-d" }}T{{ event.start_time|time:"H:i" }}&end={{ event.event_date|date:"Y-m-d" }}T{{ event.end_time|time:"H:i" }}"
+                       class="btn btn-small btn-primary">Analyze</a>
+                </td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="6" class="empty-state">No events found</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

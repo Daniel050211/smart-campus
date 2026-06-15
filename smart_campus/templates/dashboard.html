@@ -1,0 +1,288 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+    <div class="page-header-left">
+        <h1>Dashboard</h1>
+        <span class="page-subtitle">Visual analytics and cross-room comparisons</span>
+    </div>
+</div>
+
+<div class="filter-bar">
+    <form method="get" action="/dashboard/">
+        <div class="filter-row">
+            <select name="loc">
+                <option value="">All Venues</option>
+                {% for code, label in venues %}
+                <option value="{{ code }}" {% if filters.loc == code %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+            <select name="metric">
+                <option value="temp" {% if filters.metric == "temp" %}selected{% endif %}>Temperature</option>
+                <option value="hum" {% if filters.metric == "hum" %}selected{% endif %}>Humidity</option>
+                <option value="light" {% if filters.metric == "light" %}selected{% endif %}>Light</option>
+                <option value="snd" {% if filters.metric == "snd" %}selected{% endif %}>Sound</option>
+            </select>
+
+            <input type="datetime-local" name="start" value="{{ filters.start }}" placeholder="Start">
+            <input type="datetime-local" name="end" value="{{ filters.end }}" placeholder="End">
+            <button type="submit" class="btn btn-primary">Update</button>
+            {% if filters.loc or filters.start or filters.end %}
+            <a href="/dashboard/" class="btn btn-secondary">Clear</a>
+            {% endif %}
+        </div>
+    </form>
+</div>
+
+{% if filters.loc or trend_data %}
+<!-- Row 1: Trend chart - full width -->
+<div class="section">
+    <div class="chart-card">
+        <div class="chart-card-header">
+            <span class="chart-card-title">{% if filters.loc %}{{ filters.loc }}{% else %}All Venues{% endif %} &#8212; {{ filters.metric|upper }} Trend</span>
+            <select class="trend-agg-select" onchange="var p=new URLSearchParams(location.search);p.set('aggregation',this.value);location='?'+p.toString();">
+                <option value="avg" {% if aggregation == "avg" %}selected{% endif %}>Avg</option>
+                <option value="max" {% if aggregation == "max" %}selected{% endif %}>Max</option>
+                <option value="min" {% if aggregation == "min" %}selected{% endif %}>Min</option>
+            </select>
+            <span class="chart-card-badge">Line</span>
+        </div>
+        <div class="chart-container" style="height:300px;">
+            <canvas id="trendChart"></canvas>
+        </div>
+    </div>
+</div>
+
+<!-- Row 2: Multi-metric overlay + All metrics comparison - side by side -->
+<div class="chart-grid">
+    <div class="chart-card">
+        <div class="chart-card-header">
+            <span class="chart-card-title">{% if filters.loc %}{{ filters.loc }}{% else %}All Venues{% endif %} &#8212; All Metrics</span>
+            <span class="chart-card-badge">Overlay</span>
+        </div>
+        <div class="chart-container">
+            <canvas id="multiMetricChart"></canvas>
+        </div>
+    </div>
+    <div class="chart-card">
+        <div class="chart-card-title">{% if selected_venue %}{{ selected_venue.label }} Data{% else %}Temperature by Location{% endif %}</div>
+        {% if selected_venue %}
+        <div class="metric-grid-dash" style="height:240px;align-content:center;">
+            <div class="mm" style="border-top:3px solid #ef4444;"><span class="mm-label">Temperature</span><span class="mm-value" style="color:#ef4444;">{{ selected_venue.temp|floatformat:1 }}&deg;C</span></div>
+            <div class="mm" style="border-top:3px solid #3b82f6;"><span class="mm-label">Humidity</span><span class="mm-value" style="color:#3b82f6;">{{ selected_venue.hum|floatformat:1 }}%</span></div>
+            <div class="mm" style="border-top:3px solid #eab308;"><span class="mm-label">Light</span><span class="mm-value" style="color:#eab308;">{{ selected_venue.light|floatformat:0 }}%</span></div>
+            <div class="mm" style="border-top:3px solid #06b6d4;"><span class="mm-label">Sound</span><span class="mm-value" style="color:#06b6d4;">{{ selected_venue.snd|floatformat:0 }}dB</span></div>
+        </div>
+        {% else %}
+        <div class="chart-container" style="height:240px;">
+            <canvas id="tempBarChart"></canvas>
+        </div>
+        {% endif %}
+
+    </div>
+</div>
+{% else %}
+<div class="section">
+    <div class="section-header">
+        <h3>Venue Trend</h3>
+        <span class="section-subtitle">Select a venue to view detailed trends</span>
+    </div>
+    <div class="chart-card">
+        <p class="empty-state">Choose a venue or select All Venues to see aggregated trend data</p>
+    </div>
+</div>
+{% endif %}
+
+<!-- Row 3: Metric Range Summary -->
+<div class="section">
+    <div class="section-header">
+        <h3>Comfort Index</h3>
+        <span class="section-subtitle">Environmental quality score per venue
+            <span style="display:block;font-size:10px;color:var(--text-secondary);margin-top:4px;font-weight:400;">
+                Ideal ranges: Temp 20-25°C · Hum 40-60% · Light 40-80% · Sound 0-30dB
+            </span>
+        </span>
+    </div>
+    <div class="comfort-grid" id="comfortGrid"></div>
+</div>
+
+<div class="action-bar">
+    <span class="meta-text">
+        {% if filters.loc %}Showing data for {{ filters.loc }}{% else %}Showing aggregated data for all venues{% endif %}
+        {% if filters.start and filters.end %} | {{ filters.start|slice:":10" }} to {{ filters.end|slice:":10" }}{% endif %}
+    </span>
+    <div class="action-bar-right">
+        <a href="/readings/?{{ filter_qs }}" class="btn btn-small">View Source Data</a>
+        <a href="/analysis/time-event/?{{ filter_qs }}" class="btn btn-small">Check Scheduled Activity</a>
+        <a href="/export/readings/csv/?{{ filter_qs }}" class="btn btn-small">Export CSV</a>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+var trendData = {{ trend_data|safe }};
+var crossRoomData = {{ cross_room|safe }};
+var metric = "{{ filters.metric }}";
+var latestReadings = {{ latest_readings|safe }};
+var selectedLoc = "{{ filters.loc }}";
+var multiDay = trendData.length > 0 && new Date(trendData[0].timestamp).toDateString() !== new Date(trendData[trendData.length-1].timestamp).toDateString();
+function fmtTS(d) { var t = d.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}); if (multiDay) return (d.getMonth()+1)+"/"+d.getDate()+" "+t; return t; }
+
+// Temperature by Location bar chart
+(function() {
+    if (!crossRoomData || !crossRoomData.length) return;
+    var canvas = document.getElementById("tempBarChart");
+    if (!canvas) return;
+    var ctx = canvas.getContext("2d");
+    var labels = crossRoomData.map(function(d) { return d.label; });
+    var values = crossRoomData.map(function(d) { return d.temp; });
+    new Chart(ctx, {
+        type: "bar",
+        data: {
+            labels: labels,
+            datasets: [{
+                label: "Temperature (\u00b0C)",
+                data: values,
+                barThickness: 16,
+                backgroundColor: function(context) {
+                    var chart = context.chart;
+                    var c = chart.ctx;
+                    var area = chart.chartArea;
+                    if (!area) return "#3b82f6";
+                    var grad = c.createLinearGradient(0, area.top, 0, area.bottom);
+                    grad.addColorStop(0, "#3b82f6"); grad.addColorStop(0.35, "#6366f1");
+                    grad.addColorStop(0.65, "#a855f7"); grad.addColorStop(1, "#ef4444");
+                    return grad;
+                },
+                borderColor: "#ffffff22", borderWidth: 1, borderRadius: 4, borderSkipped: false,
+            }]
+        },
+        options: {
+            indexAxis: "y", responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false }, tooltip: { callbacks: { label: function(ctx) { return ctx.parsed.x + "\u00b0C"; } } } },
+            scales: {
+                x: { grid: { color: "rgba(0,0,0,0.05)" }, title: { display: true, text: "Temperature (\u00b0C)", font: { size: 10 } } },
+                y: { grid: { display: false }, ticks: { font: { size: 11, weight: "bold" } } }
+            }
+        }
+    });
+})();
+
+// Trend chart
+(function() {
+    if (trendData.length === 0) return;
+    var canvas = document.getElementById("trendChart");
+    if (!canvas) return;
+    var ctx = canvas.getContext("2d");
+    var multiDay = trendData.length > 0 && new Date(trendData[0].timestamp).toDateString() !== new Date(trendData[trendData.length-1].timestamp).toDateString();
+    function fmtTS(d) { var t = d.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}); if (multiDay) return (d.getMonth()+1)+"/"+d.getDate()+" "+t; return t; }
+    var labels = trendData.map(function(d) { return fmtTS(new Date(d.timestamp)); });
+    new Chart(ctx, {
+        type: "line",
+        data: {
+            labels: labels,
+            datasets: [{
+                label: metric.toUpperCase(),
+                data: trendData.map(function(d) { return d[metric]; }),
+                borderColor: "#3b82f6", backgroundColor: "rgba(59,130,246,0.1)",
+                fill: true, tension: 0.3, pointRadius: 3, pointHoverRadius: 5, borderWidth: 2,
+            }]
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                x: { grid: { display: false }, ticks: { maxTicksLimit: 12, font: { size: 10 } } },
+                y: { grid: { color: "rgba(0,0,0,0.05)" }, beginAtZero: metric === "light" }
+            },
+            interaction: { mode: "index", intersect: false }
+        }
+    });
+})();
+
+// Multi-metric overlay chart
+(function() {
+    if (trendData.length === 0) return;
+    var canvas = document.getElementById("multiMetricChart");
+    if (!canvas) return;
+    var ctx = canvas.getContext("2d");
+    var labels = trendData.map(function(d) { return fmtTS(new Date(d.timestamp)); });
+    var colors = { temp: "#ef4444", hum: "#3b82f6", light: "#eab308", snd: "#06b6d4" };
+    var metrics = ["temp", "hum", "light", "snd"];
+    new Chart(ctx, {
+        type: "line",
+        data: {
+            labels: labels,
+            datasets: metrics.map(function(m) {
+                return {
+                    label: m.toUpperCase(),
+                    data: trendData.map(function(d) { return d[m]; }),
+                    borderColor: colors[m], backgroundColor: colors[m] + "11",
+                    fill: m === "temp", tension: 0.3, pointRadius: 0,
+                    borderWidth: m === metric ? 2.5 : 1.5, borderDash: m === metric ? [] : [4, 4],
+                };
+            })
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { position: "top", labels: { boxWidth: 12, padding: 10, font: { size: 10 } } } },
+            scales: {
+                x: { grid: { display: false }, ticks: { maxTicksLimit: 8, font: { size: 10 } } },
+                y: { grid: { color: "rgba(0,0,0,0.05)" } }
+            },
+            interaction: { mode: "index", intersect: false }
+        }
+    });
+})();
+
+// Comfort Index per venue
+(function() {
+    var grid = document.getElementById("comfortGrid");
+    if (!grid) return;
+    var data = latestReadings && latestReadings.length ? latestReadings : crossRoomData;
+    if (!data || !data.length) return;
+    
+    function calcScore(temp, hum, light, snd) {
+        var s = 0;
+        if (temp >= 20 && temp <= 25) s += 100; else if (temp >= 18 && temp <= 27) s += 80; else if (temp >= 15 && temp <= 30) s += 50; else s += 20;
+        if (hum >= 40 && hum <= 60) s += 100; else if (hum >= 30 && hum <= 70) s += 80; else if (hum >= 20 && hum <= 80) s += 50; else s += 20;
+        if (light >= 40 && light <= 80) s += 100; else if (light >= 20 && light <= 90) s += 80; else if (light >= 10 && light <= 95) s += 50; else s += 20;
+        if (snd >= 0 && snd <= 30) s += 100; else if (snd <= 50) s += 80; else if (snd <= 70) s += 50; else s += 20;
+        return Math.round(s / 4);
+    }
+    
+    function scoreColor(score) {
+        if (score >= 90) return "#22c55e"; if (score >= 70) return "#3b82f6"; if (score >= 50) return "#eab308"; return "#ef4444";
+    }
+    
+    function scoreLabel(score) {
+        if (score >= 90) return "Excellent"; if (score >= 70) return "Good"; if (score >= 50) return "Fair"; return "Poor";
+    }
+    
+    var displayData = selectedLoc ? data.filter(function(v) { return v.loc === selectedLoc || v.label === selectedLoc; }) : data;
+    var html = "";
+    displayData.forEach(function(v) {
+        var s = calcScore(v.temp, v.hum, v.light, v.snd);
+        var c = scoreColor(s);
+        var l = scoreLabel(s);
+        var circ = 2 * Math.PI * 15.9155; // ~100
+        var dash = (s / 100) * circ;
+        html += '<div class="comfort-card">';
+        html += '<div class="comfort-name">' + v.label + '</div>';
+        html += '<svg viewBox="0 0 36 36" width="72" height="72" class="comfort-ring">';
+        html += '<path stroke="#e5e7eb" stroke-width="3" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"/>';
+        html += '<path stroke="' + c + '" stroke-width="3" fill="none" stroke-dasharray="' + dash + ' ' + circ + '" stroke-linecap="round" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"/>';
+        html += '<text x="18" y="20.5" text-anchor="middle" font-size="7" font-weight="bold" fill="' + c + '">' + s + '</text>';
+        html += '</svg>';
+        html += '<div class="comfort-label" style="color:' + c + '">' + l + '</div>';
+        html += '</div>';
+    });
+    grid.innerHTML = html;
+})();
+
+
+
+
+
+</script>
+{% endblock %}

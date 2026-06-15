@@ -1,0 +1,168 @@
+﻿{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+    <div class="page-header-left">
+        <h1>Time-Event Analysis</h1>
+        <span class="page-subtitle">Correlate environmental data with scheduled events</span>
+    </div>
+</div>
+
+<div class="filter-bar">
+    <form method="get" action="/analysis/time-event/">
+        <div class="filter-row">
+            <label>Venue:</label>
+            <select name="loc" required>
+                <option value="">Select Venue</option>
+                {% for code, label in venues %}
+                <option value="{{ code }}" {% if filters.loc == code %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+            <label>From:</label>
+            <input type="datetime-local" name="start" value="{{ filters.start }}" required>
+            <label>To:</label>
+            <input type="datetime-local" name="end" value="{{ filters.end }}" required>
+            <button type="submit" class="btn btn-primary">Analyze</button>
+            {% if filters.loc or filters.start or filters.end %}
+            <a href="/analysis/time-event/" class="btn btn-secondary">Clear</a>
+            {% endif %}
+        </div>
+    </form>
+</div>
+
+{% if avg_readings %}
+<!-- Metric summary -->
+<div class="card-grid four-col">
+    <div class="metric-card">
+        <div class="metric-icon temp">&#8451;</div>
+        <div class="metric-label">Avg Temperature</div>
+        <div class="metric-value">{{ avg_readings.temp_avg }}&deg;</div>
+        <div class="metric-detail">Max: {{ avg_readings.temp_max }}&deg;C / Min: {{ avg_readings.temp_min }}&deg;C</div>
+    </div>
+    <div class="metric-card">
+        <div class="metric-icon hum">%</div>
+        <div class="metric-label">Avg Humidity</div>
+        <div class="metric-value">{{ avg_readings.hum_avg }}%</div>
+        <div class="metric-detail">Average across period</div>
+    </div>
+    <div class="metric-card">
+        <div class="metric-icon light">&#9728;</div>
+        <div class="metric-label">Avg Light</div>
+        <div class="metric-value">{{ avg_readings.light_avg }}%</div>
+        <div class="metric-detail">Average across period</div>
+    </div>
+    <div class="metric-card">
+        <div class="metric-icon snd">&#9835;</div>
+        <div class="metric-label">Avg Sound</div>
+        <div class="metric-value">{{ avg_readings.snd_avg }} dB</div>
+        <div class="metric-detail">{{ avg_readings.count }} readings in range</div>
+    </div>
+</div>
+
+<!-- Environmental trend chart for the period -->
+<div class="section">
+    <div class="section-header">
+        <h3>Environmental Trend <span class="section-subtitle">{{ filters.loc }}</span></h3>
+        <span class="section-subtitle">{{ avg_readings.count }} data points</span>
+    </div>
+    <div class="chart-card">
+        <div class="chart-container"><canvas id="analysisTrendChart"></canvas></div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Matching events -->
+<div class="section">
+    <div class="section-header">
+        <h3>Matching Events</h3>
+    </div>
+    <div class="table-wrapper">
+        <table class="data-table">
+            <thead>
+                <tr><th>Date</th><th>Time</th><th>Event</th><th>Notes</th></tr>
+            </thead>
+            <tbody>
+                {% for event in matching_events %}
+                <tr>
+                    <td>{{ event.event_date|date:"Y-m-d" }}</td>
+                    <td>{{ event.start_time|time:"H:i" }} &ndash; {{ event.end_time|time:"H:i" }}</td>
+                    <td><strong>{{ event.event_title }}</strong></td>
+                    <td>{{ event.notes|default:"&mdash;" }}</td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="4" class="empty-state">No events in this period</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<div class="action-bar">
+    <span class="meta-text">
+        {% if filters.loc %}Analyzing {{ filters.loc }}{% endif %}
+        {% if filters.start %} from {{ filters.start|slice:":16" }}{% endif %}
+        {% if filters.end %} to {{ filters.end|slice:":16" }}{% endif %}
+    </span>
+    <div>
+        <a href="/readings/?{{ filter_qs }}" class="btn btn-small">View Source Readings</a>
+        <a href="/dashboard/?{{ filter_qs }}" class="btn btn-small">View Charts</a>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+{% if avg_readings %}
+(function() {
+    var readings = [
+        {% for r in readings_for_period %}
+        {
+            ts: "{{ r.timestamp|date:'Y-m-d H:i:s' }}",
+            temp: {{ r.temp }},
+            hum: {{ r.hum }},
+            light: {{ r.light }},
+            snd: {{ r.snd }},
+        },
+        {% endfor %}
+    ];
+
+    if (!readings.length) return;
+
+    var labels = readings.map(function(r) { return r.ts.slice(11, 16); });
+    var colors = { temp: "#ef4444", hum: "#3b82f6", light: "#eab308", snd: "#06b6d4" };
+
+    // Sample if too many points
+    if (readings.length > 200) {
+        var step = Math.ceil(readings.length / 200);
+        var sampled = [];
+        for (var i = 0; i < readings.length; i += step) sampled.push(readings[i]);
+        readings = sampled;
+        labels = readings.map(function(r) { return r.ts.slice(11, 16); });
+    }
+
+    new Chart(document.getElementById("analysisTrendChart"), {
+        type: "line",
+        data: {
+            labels: labels,
+            datasets: [
+                { label: "Temp", data: readings.map(function(r) { return r.temp; }), borderColor: colors.temp, backgroundColor: colors.temp + "22", fill: true, tension: 0.3, pointRadius: 2, yAxisID: "y" },
+                { label: "Humidity", data: readings.map(function(r) { return r.hum; }), borderColor: colors.hum, backgroundColor: colors.hum + "22", fill: true, tension: 0.3, pointRadius: 2, yAxisID: "y" },
+                { label: "Light", data: readings.map(function(r) { return r.light; }), borderColor: colors.light, backgroundColor: colors.light + "22", fill: true, tension: 0.3, pointRadius: 2, yAxisID: "y1" },
+                { label: "Sound", data: readings.map(function(r) { return r.snd; }), borderColor: colors.snd, backgroundColor: colors.snd + "22", fill: true, tension: 0.3, pointRadius: 2, yAxisID: "y1" },
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: "index", intersect: false },
+            plugins: { legend: { position: "top", labels: { boxWidth: 12, padding: 12, font: { size: 11 } } } },
+            scales: {
+                x: { grid: { display: false }, ticks: { maxTicksLimit: 15, font: { size: 10 } } },
+                y: { position: "left", title: { display: true, text: "Temp / Hum", font: { size: 10 } }, grid: { color: "rgba(0,0,0,0.05)" } },
+                y1: { position: "right", title: { display: true, text: "Light / Sound", font: { size: 10 } }, grid: { display: false } }
+            }
+        }
+    });
+})();
+{% endif %}
+</script>
+{% endblock %}

@@ -1,0 +1,216 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+    <div class="page-header-left">
+        <h1>Overview</h1>
+        <span class="page-subtitle">Real-time campus environmental monitor</span>
+    </div>
+    <div class="flex-center gap-3">
+        {% if last_update %}
+        <span class="last-update">
+            <span class="dot"></span>
+            Last update: <span id="lastUpdateTime">{{ last_update|date:"H:i:s" }}</span>
+        </span>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Metric summary cards with sparklines -->
+<div class="card-grid four-col">
+    <a href="/dashboard/?metric=temp" class="metric-card">
+        <div class="metric-icon temp">&#8451;</div>
+        <div class="metric-label">Temperature</div>
+        <div class="metric-value">{{ metrics_summary.temp|default:"--" }}&deg;</div>
+        <div class="metric-detail">Average across all venues</div>
+        <div class="chart-container-sm" id="sparkTemp"></div>
+    </a>
+    <a href="/dashboard/?metric=hum" class="metric-card">
+        <div class="metric-icon hum">%</div>
+        <div class="metric-label">Humidity</div>
+        <div class="metric-value">{{ metrics_summary.hum|default:"--" }}%</div>
+        <div class="metric-detail">Average across all venues</div>
+        <div class="chart-container-sm" id="sparkHum"></div>
+    </a>
+    <a href="/dashboard/?metric=light" class="metric-card">
+        <div class="metric-icon light">&#9728;</div>
+        <div class="metric-label">Light</div>
+        <div class="metric-value">{{ metrics_summary.light|default:"--" }}%</div>
+        <div class="metric-detail">Average across all venues</div>
+        <div class="chart-container-sm" id="sparkLight"></div>
+    </a>
+    <a href="/dashboard/?metric=snd" class="metric-card">
+        <div class="metric-icon snd">&#9835;</div>
+        <div class="metric-label">Sound</div>
+        <div class="metric-value">{{ metrics_summary.snd|default:"--" }} dB</div>
+        <div class="metric-detail">Average across all venues</div>
+        <div class="chart-container-sm" id="sparkSnd"></div>
+    </a>
+</div>
+
+<!-- Combined 24h trend chart -->
+<div class="section">
+    <div class="section-header">
+        <h3>Environmental Trend</h3>
+        <span class="section-subtitle">All metrics averaged hourly
+        <span class="range-selector">
+            <a href="/?range=1" class="range-btn{% if current_range == "1" %} active{% endif %}">1h</a>
+            <a href="/?range=3" class="range-btn{% if current_range == "3" %} active{% endif %}">3h</a>
+            <a href="/?range=6" class="range-btn{% if current_range == "6" %} active{% endif %}">6h</a>
+            <a href="/?range=24" class="range-btn{% if current_range == "24" or not current_range %} active{% endif %}">24h</a>
+            <a href="/?range=168" class="range-btn{% if current_range == "168" %} active{% endif %}">7d</a>
+        </span>
+        </span>
+    </div>
+    <div class="chart-card">
+        <div class="chart-container">
+            <canvas id="overviewTrendChart"></canvas>
+        </div>
+    </div>
+</div>
+
+
+
+<!-- Room Status -->
+
+<div class="section">
+    <div class="section-header">
+        <h3>Room Status <span class="section-subtitle">Last 15 minutes</span></h3>
+        <div class="flex-center gap-3">
+            <span class="meta-text">Auto-refresh available in nav bar</span>
+            <a href="/readings/" class="btn btn-small">View All Data</a>
+        </div>
+    </div>
+    <div class="card-grid three-col">
+        {% for code, latest in latest_per_room.items %}
+        <a href="/readings/?loc={{ code }}" class="room-card fade-in">
+            <div class="room-header">
+                <span class="room-name">{{ code }}</span>
+                <span class="room-node" data-node="{{ latest.node_id }}">{{ latest.node_id }}</span>
+                <span class="room-badge {% if latest.temp > 30 or latest.hum > 80 %}warn{% else %}ok{% endif %}">
+                    {% if latest.temp > 30 or latest.hum > 80 %}&#x26A0;{% else %}&#10003;{% endif %}
+                </span>
+            </div>
+
+           <div class="room-readings">
+               <span class="reading-item"><span class="rlabel">Temp:</span> {{ latest.temp }}&deg;C</span>
+               <span class="reading-item"><span class="rlabel">Hum:</span> {{ latest.hum }}%</span>
+               <span class="reading-item"><span class="rlabel">Light:</span> {{ latest.light }}%</span>
+               <span class="reading-item"><span class="rlabel">Sound:</span> {{ latest.snd }}dB</span>
+           </div>
+            <div class="room-time">&#9200; {{ latest.timestamp|date:"H:i:s" }}</div>
+        </a>
+        {% empty %}
+        <p class="empty-state">No recent sensor data. Waiting for devices to publish.</p>
+        {% endfor %}
+    </div>
+</div>
+
+<!-- Recent alerts -->
+<div class="section">
+    <div class="section-header">
+        <h3>Recent Alerts</h3>
+        <a href="/alerts/" class="badge-link">{{ active_alerts_count }} active</a>
+    </div>
+    <ul class="alert-list compact">
+        {% for alert in recent_alerts %}
+        <li class="alert-item {{ alert.severity }}">
+            <span class="alert-sev">{{ alert.severity }}</span>
+            <span>{{ alert.message }}</span>
+            <span class="alert-meta">{{ alert.room }} &middot; {{ alert.triggered_at|timesince }} ago</span>
+        </li>
+        {% empty %}
+        <p class="empty-state">No active alerts &mdash; all systems operational</p>
+        {% endfor %}
+    </ul>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+
+// Temperature bar chart by location
+        // Use a single vertical gradient across all bars
+
+// Fetch historical data for sparklines and trend chart
+fetch("/api/historical-summary/?hours={{ current_range }}")
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        var hours = data.hours;
+        if (!hours || !hours.length) return;
+
+        var labels = hours.map(function(h) { return h.hour; });
+
+        function makeSparkline(id, key, color) {
+            var canvas = document.getElementById(id);
+            if (!canvas) return;
+            var values = hours.map(function(h) { return h[key]; });
+            if (values.every(function(v) { return v === null; })) return;
+            new Chart(canvas, {
+                type: "line",
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        data: values,
+                        borderColor: color,
+                        backgroundColor: color + "22",
+                        fill: true,
+                        tension: 0.3,
+                        pointRadius: 0,
+                        borderWidth: 1.5,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false }, tooltip: { enabled: false } },
+                    scales: {
+                        x: { display: false },
+                        y: { display: false, beginAtZero: key === "light" }
+                    },
+                    elements: { point: { radius: 0 } }
+                }
+            });
+        }
+
+        makeSparkline("sparkTemp", "temp", "#ef4444");
+        makeSparkline("sparkHum", "hum", "#3b82f6");
+        makeSparkline("sparkLight", "light", "#eab308");
+        makeSparkline("sparkSnd", "snd", "#06b6d4");
+
+        // Full overview trend chart
+        var ctx = document.getElementById("overviewTrendChart");
+        if (ctx) {
+            new Chart(ctx, {
+                type: "line",
+                data: {
+                    labels: labels,
+                    datasets: [
+                        { label: "Temperature", data: hours.map(function(h) { return h.temp; }), borderColor: "#ef4444", backgroundColor: "#ef444422", fill: true, tension: 0.3, pointRadius: 2 },
+                        { label: "Humidity", data: hours.map(function(h) { return h.hum; }), borderColor: "#3b82f6", backgroundColor: "#3b82f622", fill: true, tension: 0.3, pointRadius: 2, yAxisID: "y" },
+                        { label: "Light", data: hours.map(function(h) { return h.light; }), borderColor: "#eab308", backgroundColor: "#eab30822", fill: true, tension: 0.3, pointRadius: 2, yAxisID: "y1" },
+                        { label: "Sound", data: hours.map(function(h) { return h.snd; }), borderColor: "#06b6d4", backgroundColor: "#06b6d422", fill: true, tension: 0.3, pointRadius: 2, yAxisID: "y1" },
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { mode: "index", intersect: false },
+                    plugins: {
+                        legend: { position: "top", labels: { boxWidth: 12, padding: 12, font: { size: 11 } } }
+                    },
+                    scales: {
+                        x: { grid: { display: false }, ticks: { maxTicksLimit: 12, font: { size: 10 } } },
+                        y: { position: "left", title: { display: true, text: "Temp / Hum", font: { size: 10 } }, grid: { color: "rgba(0,0,0,0.05)" } },
+                        y1: { position: "right", title: { display: true, text: "Light / Sound", font: { size: 10 } }, grid: { display: false } }
+                    }
+                }
+            });
+        }
+    });
+
+</script>
+{% endblock %}
+
+
+
+

@@ -1,0 +1,162 @@
+﻿{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+    <div class="page-header-left">
+        <h1>Alert History</h1>
+        <span class="page-subtitle">Review and acknowledge alerts</span>
+    </div>
+</div>
+
+<div class="filter-bar">
+    <form method="get" action="/alerts/">
+        <div class="filter-row">
+            <label>Status:</label>
+            <select name="status">
+                <option value="">All Status</option>
+                <option value="active" {% if status_filter == "active" %}selected{% endif %}>Active</option>
+                <option value="acknowledged" {% if status_filter == "acknowledged" %}selected{% endif %}>Acknowledged</option>
+            </select>
+            <label>Severity:</label>
+            <select name="severity">
+                <option value="">All Severity</option>
+                <option value="critical" {% if severity_filter == "critical" %}selected{% endif %}>Critical</option>
+                <option value="warning" {% if severity_filter == "warning" %}selected{% endif %}>Warning</option>
+            </select>
+            <label>Room:</label>
+            <select name="room">
+                <option value="">All Rooms</option>
+                {% for code, label in venues %}
+                <option value="{{ code }}" {% if room_filter == code %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+            <button type="submit" class="btn btn-primary">Filter</button>
+            {% if status_filter or severity_filter or room_filter %}
+            <a href="/alerts/" class="btn btn-secondary">Clear</a>
+            {% endif %}
+        </div>
+    </form>
+</div>
+
+<!-- Alert quick stats -->
+<div class="card-grid four-col">
+    <div class="metric-card">
+        <div class="metric-icon" style="background:#3b82f622;color:#3b82f6;">!</div>
+        <div class="metric-label">Total Alerts</div>
+        <div class="metric-value" id="totalAlertsCount">--</div>
+        <div class="metric-detail">All alerts in database</div>
+    </div>
+    <div class="metric-card">
+        <div class="metric-icon" style="background:#ef444422;color:#ef4444;">!!</div>
+        <div class="metric-label">Critical</div>
+        <div class="metric-value" id="criticalAlertsCount">--</div>
+        <div class="metric-detail">Requires immediate action</div>
+    </div>
+    <div class="metric-card">
+        <div class="metric-icon" style="background:#eab30822;color:#eab308;">!</div>
+        <div class="metric-label">Warning</div>
+        <div class="metric-value" id="warningAlertsCount">--</div>
+        <div class="metric-detail">Needs review</div>
+    </div>
+    <div class="metric-card">
+        <div class="metric-icon" style="background:#22c55e22;color:#22c55e;">&#10003;</div>
+        <div class="metric-label">Acknowledged</div>
+        <div class="metric-value" id="acknowledgedAlertsCount">--</div>
+        <div class="metric-detail">Reviewed by staff</div>
+    </div>
+</div>
+
+<div class="alert-list full">
+    {% for alert in alerts %}
+    <div class="alert-card {{ alert.severity }}">
+        <div class="alert-card-header">
+            <span class="alert-badge {{ alert.severity }}">{{ alert.severity }}</span>
+            <span class="alert-type">{{ alert.alert_type }}</span>
+            <span class="alert-room">{{ alert.room }}</span>
+            <span class="alert-status {{ alert.status }}">{{ alert.status }}</span>
+        </div>
+        <p class="alert-msg">{{ alert.message }}</p>
+        <div class="alert-meta-row">
+            <span>&#9200; {{ alert.triggered_at|date:"Y-m-d H:i:s" }}</span>
+        </div>
+        <div class="alert-actions">
+            <a href="/readings/?loc={{ alert.room }}&start={{ alert.triggered_at|date:'Y-m-d\TH:i' }}" class="btn btn-small btn-secondary">Inspect Readings</a>
+            <a href="/analysis/time-event/?loc={{ alert.room }}&start={{ alert.triggered_at|date:'Y-m-d\TH:i' }}" class="btn btn-small btn-secondary">Check Events</a>
+            {% if alert.status == "active" %}
+            <button class="btn btn-small btn-acknowledge" data-alert-id="{{ alert.id }}" style="background:#16a34a;border-color:#16a34a;color:#fff;">&#10003; Acknowledge</button>
+            {% endif %}
+        </div>
+    </div>
+    {% empty %}
+    <div class="chart-card">
+        <p class="empty-state">No alerts found</p>
+    </div>
+    {% endfor %}
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Fetch alert stats
+fetch("/api/alert-stats/?days=7")
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (!data) return;
+        var el = function(id) { return document.getElementById(id); };
+        if (el("totalAlertsCount")) el("totalAlertsCount").textContent = data.total;
+        if (el("criticalAlertsCount")) el("criticalAlertsCount").textContent = (data.by_severity && data.by_severity.critical) || 0;
+        if (el("warningAlertsCount")) el("warningAlertsCount").textContent = (data.by_severity && data.by_severity.warning) || 0;
+        if (el("acknowledgedAlertsCount")) el("acknowledgedAlertsCount").textContent = (data.by_status && data.by_status.acknowledged) || 0;
+    });
+</script>
+<script>
+// Acknowledge alert via API without page reload
+document.addEventListener("click", function(e) {
+    var btn = e.target.closest(".btn-acknowledge");
+    if (!btn) return;
+    e.preventDefault();
+    var alertId = btn.getAttribute("data-alert-id");
+    var card = btn.closest(".alert-card");
+    btn.disabled = true;
+    btn.textContent = "Acknowledging...";
+    fetch("/api/alerts/" + alertId + "/acknowledge/", { method: "POST" })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.ok) {
+                if (card) {
+                    card.querySelector(".alert-status").textContent = "acknowledged";
+                    card.querySelector(".alert-status").className = "alert-status acknowledged";
+                    btn.textContent = "\u2713 Done";
+                    btn.style.background = "#6b7280";
+                    btn.style.borderColor = "#6b7280";
+                    btn.disabled = true;
+                }
+                // Update nav badge and toast
+                var badges = document.querySelectorAll(".nav-badge");
+                var totalActive = 0;
+                badges.forEach(function(b) {
+                    var count = parseInt(b.textContent, 10);
+                    if (count > 0) {
+                        count--;
+                        b.textContent = count;
+                        totalActive += count;
+                        if (count === 0) {
+                            b.remove();
+                            var toast = document.getElementById("alertToast");
+                            if (toast) toast.remove();
+                        }
+                    }
+                });
+                if (totalActive <= 1) {
+                    var toast = document.getElementById("alertToast");
+                    if (toast) toast.remove();
+                }
+            } else { btn.disabled = false; }
+        })
+        .catch(function() {
+            btn.disabled = false;
+            btn.textContent = "\u2713 Acknowledge";
+        });
+});
+
+</script>
+{% endblock %}

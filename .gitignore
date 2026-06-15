@@ -1,0 +1,30 @@
+﻿# Django
+*.pyc
+__pycache__/
+*.pyo
+.env
+db.sqlite3
+db2.sqlite3
+
+# SQLite WAL
+*.sqlite3-shm
+*.sqlite3-wal
+
+# Logs and backups
+server_*.txt
+mqtt_listener_backup.py
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python
+*.egg-info/
+dist/
+build/
+.eggs/
