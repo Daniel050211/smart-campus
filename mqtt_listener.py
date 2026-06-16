@@ -270,7 +270,8 @@ def on_message(client, userdata, msg):
 
 
 def main():
-    client = mqtt.Client(client_id="A02")
+    import socket
+    client = mqtt.Client(client_id=f"A02-{socket.gethostname()}")
     client.on_connect = on_connect
     client.on_message = on_message
 
