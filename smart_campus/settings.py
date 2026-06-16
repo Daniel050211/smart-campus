@@ -97,9 +97,9 @@ ALERT_NIGHT_INTRUSION_LIGHT_THRESHOLD_A03 = 75       # % - R2 (A03 only)
 # R5 - removed
 # R6: A04 only:          temp >= 29C sustained 5 min  => Warning
 # R7 - removed
-ALERT_TEMP_WARNING_DEFAULT = 28.0    # C - R4
+ALERT_TEMP_WARNING_DEFAULT = 35.0    # C - R4
 # ALERT_TEMP_CRITICAL_DEFAULT = 30.0  - removed
-ALERT_TEMP_WARNING_A04 = 29.0        # C - R6
+ALERT_TEMP_WARNING_A04 = 36.0        # C - R6
 # ALERT_TEMP_CRITICAL_A04 = 31.0     - removed
 ALERT_TEMP_LOW = 10.0               # C - Low temp warning (below 10C)
 
@@ -123,3 +123,6 @@ def _activate_sqlite_wal(sender, connection, **kwargs):
         cursor.execute("PRAGMA synchronous=NORMAL;")
 
 connection_created.connect(_activate_sqlite_wal)
+
+# OpenAI Chat Assistant
+OPENAI_API_KEY = "sk-0450f9c9fd4c4aceb42a8b660780e2a3"

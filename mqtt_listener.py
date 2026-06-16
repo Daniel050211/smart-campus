@@ -73,15 +73,18 @@ def check_and_create_alerts(reading, node_id, mqtt_client=None):
     R1 (Critical): Night + sound>=28dB + light>=70%   -> A01, A02, A04, A06
     R2 (Critical): Night + sound>=28dB + light>=75%   -> A03
     R3 (Critical): Night + sound>=30dB (no light)     -> A05
-    R4 (Warning):  Temp >=28C sustained 5 min         -> A01-A03, A05, A06
+    R4 (Warning):  Temp >=35C sustained 5 min         -> A01-A03, A05, A06
     R5 (Critical): Temp >=30C immediate               -> A01-A03, A05, A06
-    R6 (Warning):  Temp >=29C sustained 5 min         -> A04
+    R6 (Warning):  Temp >=36C sustained 5 min         -> A04
     R7 (Critical): Temp >=31C immediate               -> A04
     """
     now_local = timezone.localtime()
     is_night = now_local.hour >= settings.ALERT_NIGHT_START or now_local.hour < settings.ALERT_NIGHT_END
 
     def _sustained(threshold):
+        # If temp is extremely high (>= threshold + 5C), alert immediately
+        if reading.temp >= threshold + 5:
+            return True
         cutoff = reading.timestamp - timedelta(minutes=settings.ALERT_SUSTAINED_MINUTES)
         recent = SensorReading.objects.filter(
             node_id=node_id, loc=reading.loc,
@@ -144,16 +147,15 @@ def check_and_create_alerts(reading, node_id, mqtt_client=None):
 
     # ===== TEMPERATURE ALERTS - R4, R6 (Warning sustained) =====
     if node_id == "A04":
-        warn_t = settings.ALERT_TEMP_WARNING_A04        # R6: 29C sustained
+        warn_t = settings.ALERT_TEMP_WARNING_A04        # R6: 36C sustained
     else:
-        warn_t = settings.ALERT_TEMP_WARNING_DEFAULT    # R4: 28C sustained
+        warn_t = settings.ALERT_TEMP_WARNING_DEFAULT    # R4: 35C sustained
 
-    # R4/R6: Warning - sustained 5 min above warning threshold
     if reading.temp >= warn_t:
         existing = Alert.objects.filter(
             room=reading.loc, alert_type="High Temperature", severity="warning", status="active"
         ).exists()
-        if not existing and _sustained(warn_t):
+        if not existing:
             a = Alert.objects.create(
                 severity="warning",
                 alert_type="High Temperature",
@@ -250,6 +252,17 @@ def on_message(client, userdata, msg):
         print(f"[{reading.timestamp:%Y-%m-%d %H:%M:%S}] Stored: {node_id} @ {loc} "
               f"T:{reading.temp}\u00b0C H:{reading.hum}% L:{reading.light}% S:{reading.snd}dB")
         _db_retry(lambda: check_and_create_alerts(reading, node_id, client))
+        # Publish reading via MQTT for ESP display (no firewall needed)
+        try:
+            reading_msg = json.dumps({
+                "node_id": node_id, "loc": loc,
+                "temp": reading.temp, "hum": reading.hum,
+                "light": reading.light, "snd": reading.snd,
+            })
+            client.publish("iot/readings", reading_msg)
+            print(f"  Published to iot/readings: {node_id} @ {loc}")
+        except Exception as e:
+            print(f"  Failed to publish readings MQTT: {e}")
     except (ValueError, TypeError) as e:
         print(f"Invalid sensor values from {node_id}: {e}")
     except OperationalError as e:

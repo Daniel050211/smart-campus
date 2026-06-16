@@ -82,7 +82,9 @@ def overview_view(request):
     # Latest reading per venue from the last 15 minutes
     cutoff = now() - timedelta(minutes=15)
     latest_per_room = {}
-    for code, _ in SensorReading.VENUE_CHOICES:
+    # Order by node: A01-A03 first row, A04-A06 second row
+    NODE_LOC_ORDER = ["W311A", "W311-H1", "W311-H2", "W311-H3", "W311D-Z1", "W311D-Z2"]
+    for code in NODE_LOC_ORDER:
         latest = (
             clean_readings(SensorReading.objects.filter(loc=code, timestamp__gte=cutoff))
             .order_by("-timestamp")
@@ -608,6 +610,7 @@ def api_historical_summary(request):
             "light": round(r["light"] or 0, 1),
             "snd": round(r["snd"] or 0, 1),
         })
+
     return JsonResponse({"hours": result})
 
 
@@ -660,4 +663,167 @@ def export_readings_csv(request):
         writer.writerow([r.id, r.node_id, r.loc, r.temp, r.hum, r.light, r.snd, r.timestamp.strftime('%Y-%m-%d %H:%M:%S')])
     return response
 
+
+VENUE_ALIASES = {
+    "w311a": "W311A", "w311 a": "W311A", "room a": "W311A", "a": "W311A",
+    "w311-h1": "W311-H1", "w311 h1": "W311-H1", "h1": "W311-H1",
+    "w311-h2": "W311-H2", "w311 h2": "W311-H2", "h2": "W311-H2",
+    "w311-h3": "W311-H3", "w311 h3": "W311-H3", "h3": "W311-H3",
+    "w311d-z1": "W311D-Z1", "w311d z1": "W311D-Z1", "z1": "W311D-Z1",
+    "w311d-z2": "W311D-Z2", "w311d z2": "W311D-Z2", "z2": "W311D-Z2",
+}
+
+HELP_TEXT = """I can help you with:
+- temp [venue] - get temperature for a room
+- humidity [venue] - get humidity for a room
+- alerts - show active alerts
+- status - overall system status
+- go to [page] - navigate (overview, dashboard, alerts, events, readings)
+- explain [term] - explain alert terms (critical, warning, intrusion)
+- help - show this menu"""
+HELP_TEXT = (
+    "I can help you with:\n"
+    "- temp [venue] - get temperature for a room\n"
+    "- humidity [venue] - get humidity for a room\n"
+    "- alerts - show active alerts\n"
+    "- status - overall system status\n"
+    "- go to [page] - navigate (overview, dashboard, alerts, events, readings)\n"
+    "- explain [term] - explain alert terms (critical, warning, intrusion)\n"
+    "- help - show this menu"
+)
+
+@csrf_exempt
+def api_chat(request):
+    if request.method != "POST":
+        return JsonResponse({"reply": "Send a POST request with a message."})
+    try:
+        data = json.loads(request.body)
+        msg = data.get("message", "").strip().lower()
+    except (json.JSONDecodeError, AttributeError):
+        msg = (request.POST.get("message") or "").strip().lower()
+    if not msg:
+        return JsonResponse({"reply": "Say something! Try help for commands."})
+
+    # Check if msg is a venue name (for two-step commands like "temp" then "W311-H1")
+    matched_venue = None
+    for alias, code in VENUE_ALIASES.items():
+        if msg == alias:
+            matched_venue = code
+            break
+    if matched_venue:
+        ctx = request.session.get("chat_pending", "")
+        if ctx in ("temp", "temperature"):
+            msg = "temp " + msg
+        elif ctx in ("hum", "humidity"):
+            msg = "humidity " + msg
+        request.session["chat_pending"] = ""
+    else:
+        request.session["chat_pending"] = ""
+
+    action = None
+    reply = ""
+    if msg in ("help", "hello", "hi", "hey", "what can you do"):
+        reply = HELP_TEXT
+    elif msg in ("status", "summary", "overview"):
+        from django.utils.timezone import now as tz_now
+        n = tz_now()
+        cutoff = n - timedelta(minutes=15)
+        qs = clean_readings(SensorReading.objects.filter(timestamp__gte=cutoff))
+        total = qs.count()
+        rooms = qs.values("loc").distinct().count()
+        alerts = Alert.objects.filter(status="active").count()
+        reply = "System Status:\n- %d readings in last 15 min\n- %d venues reporting\n- %d active alerts" % (total, rooms, alerts)
+    elif msg in ("alerts", "active alerts", "show alerts"):
+        alerts = Alert.objects.filter(status="active").order_by("-triggered_at")[:5]
+        if alerts:
+            lines = ["Active Alerts:"]
+            for a in alerts:
+                lines.append("  [%s] %s @ %s" % (a.severity, a.alert_type, a.room))
+            reply = "\n".join(lines)
+            action = "/alerts/"
+        else:
+            reply = "No active alerts - all systems normal."
+    elif any(msg.startswith(w) for w in ("temp", "temperature", "hum", "humidity")):
+        parts = msg.split()
+        if len(parts) < 2:
+            request.session["chat_pending"] = parts[0]  # Remember: "temp" or "humidity"
+            reply = "Which venue? Try temp W311-H1 or humidity H1"
+        else:
+            venue_key = " ".join(parts[1:]).strip()
+            matched = None
+            for alias, code in VENUE_ALIASES.items():
+                if venue_key == alias:
+                    matched = code
+                    break
+            if not matched:
+                reply = "Unknown venue. Try: W311A, H1, H2, H3, Z1, Z2"
+            else:
+                from django.utils.timezone import now as tz_now
+                cutoff = tz_now() - timedelta(minutes=15)
+                reading = clean_readings(SensorReading.objects.filter(loc=matched, timestamp__gte=cutoff)).order_by("-timestamp").first()
+                if reading:
+                    is_temp = msg.startswith("temp") or msg.startswith("temperature")
+                    if is_temp:
+                        reply = "%s: %.1f deg C" % (matched, reading.temp)
+                    else:
+                        reply = "%s: %.1f%% humidity" % (matched, reading.hum)
+                else:
+                    reply = "No recent data for " + matched
+    elif msg.startswith("explain"):
+        term = msg.replace("explain", "").strip()
+        if term in ("critical", "warning", "intrusion", "sound", "temperature"):
+            reply = {
+                "critical": "Critical alerts need immediate attention - red blinking on the ESP tag. Includes Night Intrusion, Sound Spike.",
+                "warning": "Warning alerts indicate potential issues - yellow blinking on the ESP tag. Currently: High Temp (>=35C), Low Temp (<10C).",
+                "intrusion": "Night Intrusion: high sound + light during 22:00-06:00. Different thresholds per node.",
+                "sound": "Sound Spike: ambient noise >=80dB at any time. Could indicate glass break or loud activity.",
+                "temperature": "Temperature alert: warning if >=35C or <10C. ESP shows W on matrix with yellow LED.",
+            }[term]
+        else:
+            reply = "Try: explain critical, warning, intrusion, sound, or temperature"
+    elif msg.startswith("go to"):
+        page = msg.replace("go to", "").strip()
+        pages = {"overview": "/", "dashboard": "/dashboard/", "alerts": "/alerts/", "events": "/events/", "readings": "/readings/", "home": "/"}
+        for name, url in pages.items():
+            if page == name or name in page:
+                reply = "Taking you to %s..." % name.title()
+                action = url
+                break
+        if not reply:
+            reply = "Pages: overview, dashboard, alerts, events, readings"
+    else:
+        try:
+            from django.conf import settings as _s
+            import urllib.request
+            c = now() - timedelta(minutes=15)
+            ctx_lines = ["Current readings:"]
+            for code, _ in SensorReading.VENUE_CHOICES:
+                r = clean_readings(SensorReading.objects.filter(loc=code, timestamp__gte=c)).order_by("-timestamp").first()
+                if r:
+                    ctx_lines.append(f"- {code}: {r.temp}C, {r.hum}% hum, {r.light}% light, {r.snd}dB")
+            al = Alert.objects.filter(status="active")
+            if al:
+                ctx_lines.append(f"\nAlerts ({al.count()}):")
+                for a in al:
+                    ctx_lines.append(f"- [{a.severity}] {a.alert_type} at {a.room}")
+            ctx = "\n".join(ctx_lines)
+            ds_data = json.dumps({
+                "model": "deepseek-v4-flash",
+                "messages": [
+                    {"role": "system", "content": "You are a campus monitor assistant. Answer based on this data. Keep reply brief (<80 words).\n" + ctx},
+                    {"role": "user", "content": msg},
+                ],
+                "max_tokens": 150,
+            }).encode()
+            ds_req = urllib.request.Request(
+                "https://api.deepseek.com/v1/chat/completions",
+                data=ds_data,
+                headers={"Content-Type": "application/json", "Authorization": "Bearer " + _s.OPENAI_API_KEY}
+            )
+            ds_resp = urllib.request.urlopen(ds_req, timeout=20)
+            ds_result = json.loads(ds_resp.read().decode())
+            reply = ds_result["choices"][0]["message"]["content"].strip()
+        except Exception as e:
+            reply = "Sorry, the AI service is unavailable right now."
+    return JsonResponse({"reply": reply, "action": action})
 

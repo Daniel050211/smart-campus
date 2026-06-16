@@ -93,6 +93,65 @@
         <span>TM1118 Smart Campus &mdash; IoT Environmental Monitoring System</span>
     </footer>
     <script src="/static/js/app.js?v=3"></script>
-    {% block extra_js %}{% endblock %}
+<!-- Chat Assistant -->
+<style>
+.chat-btn{position:fixed;bottom:20px;right:20px;width:48px;height:48px;border-radius:50%;background:#3b82f6;color:#fff;border:none;font-size:22px;cursor:pointer;z-index:999;box-shadow:0 2px 10px rgba(0,0,0,.2);}
+.chat-box{position:fixed;bottom:80px;right:20px;width:320px;max-height:420px;background:#fff;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,.15);z-index:999;display:none;flex-direction:column;overflow:hidden;border:1px solid #e2e8f0;}
+.chat-box.open{display:flex;}
+.chat-header{background:#3b82f6;color:#fff;padding:10px 14px;font-size:14px;font-weight:600;}
+.chat-msgs{padding:10px;overflow-y:auto;flex:1;max-height:300px;font-size:13px;}
+.chat-msg{margin-bottom:8px;line-height:1.4;}
+.chat-msg.user{text-align:right;}
+.chat-msg.user span{background:#3b82f6;color:#fff;padding:6px 10px;border-radius:12px 12px 2px 12px;display:inline-block;max-width:85%;}
+.chat-msg.bot span{background:#f1f5f9;color:#1e293b;padding:6px 10px;border-radius:12px 12px 12px 2px;display:inline-block;max-width:85%;white-space:pre-wrap;}
+.chat-input{display:flex;border-top:1px solid #e2e8f0;padding:6px;}
+.chat-input input{flex:1;border:none;padding:8px 10px;outline:none;font-size:13px;}
+.chat-input button{background:#3b82f6;color:#fff;border:none;border-radius:6px;padding:6px 12px;cursor:pointer;font-size:13px;margin-left:4px;}
+.suggestions{display:flex;flex-wrap:wrap;gap:5px;padding:8px 10px 4px;border-top:1px solid #e2e8f0;}
+.suggestions button{background:#f1f5f9;color:#1e293b;border:1px solid #d1d5db;border-radius:14px;padding:4px 10px;font-size:11px;cursor:pointer;white-space:nowrap;}
+.suggestions button:hover{background:#e2e8f0;}
+</style>
+<button class="chat-btn" id="chatBtn" onclick="toggleChat()">?</button>
+<div class="chat-box" id="chatBox">
+  <div class="chat-header">Campus Assistant</div>
+  <div class="chat-msgs" id="chatMsgs">
+    <div class="chat-msg bot"><span>Hi! Ask me about sensor data. Try "help" for commands.</span></div>
+    <div class="suggestions" id="chatSuggestions">
+      <button onclick='suggest("temp W311-H1")'>Temp in H1</button>
+      <button onclick='suggest("humidity W311A")'>Humidity in A</button>
+      <button onclick='suggest("alerts")'>Active alerts</button>
+      <button onclick='suggest("Which room is the coolest?")'>Coolest room</button>
+      <button onclick='suggest("status")'>System status</button>
+      <button onclick='suggest("explain critical")'>What is critical?</button>
+    </div>
+  </div>
+  <div class="chat-input">
+    <input type="text" id="chatInput" placeholder="Ask something..." onkeydown="if(event.key==='Enter')sendChat()">
+    <button onclick="sendChat()">Send</button>
+  </div>
+</div>
+<script>
+function suggest(m){document.getElementById("chatInput").value=m;sendChat();}
+function initChat(){var msgs=document.getElementById('chatMsgs'),s=localStorage.getItem('chatMsgs');if(s)msgs.innerHTML=s;var inp=document.getElementById('chatInput'),si=localStorage.getItem('chatInput');if(si)inp.value=si;inp.addEventListener('input',function(){localStorage.setItem('chatInput',inp.value);});}
+initChat();
+function toggleChat(){var b=document.getElementById('chatBox');b.classList.toggle('open');if(b.classList.contains('open'))document.getElementById('chatInput').focus();}
+function saveChat(){localStorage.setItem('chatMsgs',document.getElementById('chatMsgs').innerHTML);}
+function sendChat(){
+  var inp=document.getElementById('chatInput'),msg=inp.value.trim();if(!msg)return;
+  var msgs=document.getElementById('chatMsgs');
+  msgs.innerHTML+='<div class="chat-msg user"><span>'+msg.replace(/</g,'&lt;')+'</span></div>';
+  saveChat();inp.value='';msgs.scrollTop=msgs.scrollHeight;
+  fetch('/api/chat/',{method:'POST',headers:{'Content-Type':'application/json','X-CSRFToken':''},body:JSON.stringify({message:msg})})
+  .then(function(r){return r.json()})
+  .then(function(d){
+    msgs.innerHTML+='<div class="chat-msg bot"><span>'+d.reply.replace(/\\n/g,'<br>')+'</span></div>';
+    saveChat();msgs.scrollTop=msgs.scrollHeight;
+    if(d.action)setTimeout(function(){window.location.href=d.action;},1500);
+  })
+  .catch(function(){msgs.innerHTML+='<div class="chat-msg bot"><span>Error connecting to server.</span></div>';saveChat();});
+}
+</script>
+{% block extra_js %}{% endblock %}
 </body>
 </html>
+

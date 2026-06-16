@@ -44,6 +44,9 @@ class Command(BaseCommand):
             self.stdout.write("No new alerts generated")
 
     def _is_sustained(self, reading, threshold):
+        # If temp is extremely high (>= threshold + 5C), alert immediately
+        if reading.temp >= threshold + 5:
+            return True
         cutoff = reading.timestamp - timedelta(minutes=settings.ALERT_SUSTAINED_MINUTES)
         recent = SensorReading.objects.filter(
             node_id=reading.node_id, loc=reading.loc,
@@ -146,9 +149,9 @@ class Command(BaseCommand):
 
         if reading.temp >= warn_t:
             existing = Alert.objects.filter(
-                room=reading.loc, alert_type="High Temperature", severity="warning", status="active"
+            room=reading.loc, alert_type="High Temperature", severity="warning", status="active"
             ).exists()
-            if not existing and self._is_sustained(reading, warn_t):
+            if not existing:
                 Alert.objects.create(
                     severity="warning",
                     alert_type="High Temperature",

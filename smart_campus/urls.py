@@ -17,5 +17,6 @@ urlpatterns = [
     path("api/alerts/<int:alert_id>/acknowledge/", views.api_alert_acknowledge, name="api_alert_acknowledge"),
     path("api/alert-stats/", views.api_alert_stats, name="api_alert_stats"),
     path("api/historical-summary/", views.api_historical_summary, name="api_historical_summary"),
+    path("api/chat/", views.api_chat, name="api_chat"),
     path("export/readings/csv/", views.export_readings_csv, name="export_readings_csv"),
 ]
